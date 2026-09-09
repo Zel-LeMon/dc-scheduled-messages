@@ -1,0 +1,64 @@
+name: Bear Trap Event Countdown Reminders
+
+on:
+  schedule:
+    # Bear Trap 2 (Starts at 17:00 UTC) -> Trigger 60m early at 16:00 UTC every 2 days
+    - cron: '0 16 */2 * *'
+
+    # Bear Trap 1 (Starts at 20:00 UTC) -> Trigger 60m early at 19:00 UTC every 2 days
+    - cron: '0 19 */2 * *'
+
+  workflow_dispatch:
+    inputs:
+      event_type:
+        description: 'Which event to test?'
+        required: true
+        type: choice
+        options:
+          - 'Bear Trap 2 (17:00 UTC)'
+          - 'Bear Trap 1 (20:00 UTC)'
+
+jobs:
+  bear-trap-sequence:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Process Countdown Sequence
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          MANUAL_TEST: ${{ github.event.inputs.event_type }}
+        run: |
+          # Helper function to post messages safely
+          post () {
+            curl -H "Content-Type: application/json" \
+                 -X POST \
+                 -d "{\"content\": \"$1\"}" \
+                 $DISCORD_WEBHOOK
+          }
+
+          # Check UTC hour to determine which Bear Trap event is running
+          HOUR=$(date -u +%H)
+
+          if [ "$HOUR" = "16" ] || [ "$MANUAL_TEST" = "Bear Trap 2 (17:00 UTC)" ]; then
+            EVENT="Bear Trap 2"
+          else
+            EVENT="Bear Trap 1"
+          fi
+
+          # 1. T-60 Minutes
+          post "@everyone ⌛ **$EVENT** starting in **60 minutes**! Get ready!"
+          sleep 1800  # Wait 30 minutes
+
+          # 2. T-30 Minutes
+          post "@everyone ⏰ **30 minutes** until **$EVENT**!"
+          sleep 900   # Wait 15 minutes
+
+          # 3. T-15 Minutes
+          post "@everyone 🚨 **15 minutes** remaining for **$EVENT**!"
+          sleep 600   # Wait 10 minutes
+
+          # 4. T-5 Minutes
+          post "@everyone 🔔 **5 minutes** left! Get prepped for **$EVENT**!"
+          sleep 300   # Wait 5 minutes
+
+          # 5. Event Start
+          post "@everyone 🎉 **$EVENT is STARTING NOW!** Log In!"
