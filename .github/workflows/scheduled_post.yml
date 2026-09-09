@@ -19,5 +19,5 @@ jobs:
         run: |
           curl -H "Content-Type: application/json" \
                -X POST \
-               -d '{"content": "@everyone Keylan's a beach making me code when high! A Beach nut! A smaaaaall beach nut."}' \
+               -d '{"content": "@everyone Keylan a beach making me code when high! A Beach nut! A smaaaaall beach nut."}' \
                $DISCORD_WEBHOOK
