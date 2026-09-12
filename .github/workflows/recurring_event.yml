@@ -1,64 +1,109 @@
-name: Bear Trap Event Countdown Reminders
+name: Dynamic Event Reminders
 
 on:
   schedule:
-    # Bear Trap 2 (Starts at 17:00 UTC) -> Trigger 60m early at 16:00 UTC every 2 days
-    - cron: '0 16 */2 * *'
-
-    # Bear Trap 1 (Starts at 20:00 UTC) -> Trigger 60m early at 19:00 UTC every 2 days
-    - cron: '0 19 */2 * *'
+    # Runs every 30 minutes to check for upcoming events
+    - cron: '0,30 * * * *'
 
   workflow_dispatch:
-    inputs:
-      event_type:
-        description: 'Which event to test?'
-        required: true
-        type: choice
-        options:
-          - 'Bear Trap 2 (17:00 UTC)'
-          - 'Bear Trap 1 (20:00 UTC)'
 
 jobs:
-  bear-trap-sequence:
+  check-and-run:
     runs-on: ubuntu-latest
     steps:
-      - name: Process Countdown Sequence
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Check Schedule & Run Sequence
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          MANUAL_TEST: ${{ github.event.inputs.event_type }}
+          CSV_URL: ${{ secrets.SCHEDULE_CSV_URL }}
         run: |
-          # Helper function to post messages safely
-          post () {
-            curl -H "Content-Type: application/json" \
-                 -X POST \
-                 -d "{\"content\": \"$1\"}" \
-                 $DISCORD_WEBHOOK
-          }
+          python - << 'EOF'
+          import os, csv, time, requests, datetime
 
-          # Check UTC hour to determine which Bear Trap event is running
-          HOUR=$(date -u +%H)
+          webhook_url = os.environ['DISCORD_WEBHOOK']
+          csv_url = os.environ['CSV_URL']
 
-          if [ "$HOUR" = "16" ] || [ "$MANUAL_TEST" = "Bear Trap 2 (17:00 UTC)" ]; then
-            EVENT="Bear Trap 2"
-          else
-            EVENT="Bear Trap 1"
-          fi
+          def send_discord(text):
+              if text and text.strip():
+                  requests.post(webhook_url, json={"content": text.strip()})
 
-          # 1. T-60 Minutes
-          post "@everyone ⌛ **$EVENT** starting in **60 minutes**! Get ready!"
-          sleep 1800  # Wait 30 minutes
+          # Get current UTC datetime
+          now_utc = datetime.datetime.now(datetime.timezone.utc)
 
-          # 2. T-30 Minutes
-          post "@everyone ⏰ **30 minutes** until **$EVENT**!"
-          sleep 900   # Wait 15 minutes
+          # Fetch CSV from Google Sheets
+          response = requests.get(csv_url)
+          response.encoding = 'utf-8'
+          lines = response.text.splitlines()
+          reader = csv.DictReader(lines)
 
-          # 3. T-15 Minutes
-          post "@everyone 🚨 **15 minutes** remaining for **$EVENT**!"
-          sleep 600   # Wait 10 minutes
+          for row in reader:
+              sched_date = row.get('Date Scheduled', '').strip()
+              sched_time = row.get('Time Scheduled', '').strip()
 
-          # 4. T-5 Minutes
-          post "@everyone 🔔 **5 minutes** left! Get prepped for **$EVENT**!"
-          sleep 300   # Wait 5 minutes
+              if sched_date and sched_time:
+                  try:
+                      # Parse dates (YYYY-MM-DD, MM/DD/YYYY, or MM/DD)
+                      for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m/%d'):
+                          try:
+                              parsed_date = datetime.datetime.strptime(sched_date, fmt)
+                              if fmt == '%m/%d':
+                                  parsed_date = parsed_date.replace(year=now_utc.year)
+                              break
+                          except ValueError:
+                              continue
 
-          # 5. Event Start
-          post "@everyone 🎉 **$EVENT is STARTING NOW!** Log In!"
+                      # Parse HH:MM format
+                      time_parts = sched_time.split(':')
+                      event_datetime = now_utc.replace(
+                          year=parsed_date.year,
+                          month=parsed_date.month,
+                          day=parsed_date.day,
+                          hour=int(time_parts[0]),
+                          minute=int(time_parts[1]) if len(time_parts) > 1 else 0,
+                          second=0,
+                          microsecond=0
+                      )
+
+                      # Calculate T-60m warning target time
+                      warning_60m_time = event_datetime - datetime.timedelta(hours=1)
+                      diff_seconds = (warning_60m_time - now_utc).total_seconds()
+
+                      # Trigger if check lands within window (-15m to +14m of target)
+                      if -900 <= diff_seconds <= 840:
+                          event_name = row.get('Event Name', 'Event')
+                          print(f"Matched scheduled event: {event_name} starting at {sched_time} UTC")
+
+                          if diff_seconds > 0:
+                              print(f"Aligning to exact T-60m start... sleeping {diff_seconds:.0f}s")
+                              time.sleep(diff_seconds)
+
+                          # 60m Warning
+                          send_discord(row.get('Msg60'))
+                          time.sleep(1800)  # Wait 30m
+
+                          # 30m Warning
+                          send_discord(row.get('Msg30'))
+                          time.sleep(900)   # Wait 15m
+
+                          # 15m Warning
+                          send_discord(row.get('Msg15'))
+                          time.sleep(600)   # Wait 10m
+
+                          # 5m Warning
+                          send_discord(row.get('Msg5'))
+                          time.sleep(300)   # Wait 5m
+
+                          # Event Start
+                          send_discord(row.get('Msg0'))
+                          break
+
+                  except Exception as e:
+                      print(f"Error evaluating row {row.get('Event Name')}: {e}")
+          EOF
