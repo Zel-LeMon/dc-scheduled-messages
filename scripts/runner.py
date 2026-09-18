@@ -3,13 +3,40 @@ import os, csv, time, requests, datetime
 webhook_url = os.environ['DISCORD_WEBHOOK']
 csv_url = os.environ['CSV_URL']
 
-def send_discord(text):
-    if text and text.strip():
-        payload = {
-            "content": text.strip(),
-            "allowed_mentions": {"parse": ["everyone", "roles", "users"]}
-        }
-        requests.post(webhook_url, json=payload)
+def send_discord(template_text, target_event_time, default_mins):
+    if not template_text or not template_text.strip():
+        return
+
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    
+    # Calculate exact remaining minutes right now
+    remaining_seconds = (target_event_time - now_utc).total_seconds()
+    actual_mins = round(remaining_seconds / 60)
+
+    # Prevent non-sensical times if delayed past start
+    if actual_mins <= 0 and default_mins > 0:
+        actual_mins = 1
+
+    text = template_text.strip()
+
+    # Dynamically replace minute placeholders if the run starts late
+    if default_mins > 0:
+        text = text.replace(f"{default_mins} MINUTES", f"{actual_mins} MINUTES")
+        text = text.replace(f"{default_mins} minutes", f"{actual_mins} minutes")
+        text = text.replace(f"{default_mins} MINS", f"{actual_mins} MINS")
+        text = text.replace(f"{default_mins} mins", f"{actual_mins} mins")
+
+    payload = {
+        "content": text,
+        "allowed_mentions": {"parse": ["everyone", "roles", "users"]}
+    }
+    requests.post(webhook_url, json=payload)
+
+def sleep_until(target_dt):
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    delay = (target_dt - now_utc).total_seconds()
+    if delay > 0:
+        time.sleep(delay)
 
 now_utc = datetime.datetime.now(datetime.timezone.utc)
 
@@ -47,31 +74,42 @@ for row in reader:
                 tzinfo=datetime.timezone.utc
             )
 
-            warning_60m_time = event_datetime - datetime.timedelta(hours=1)
-            diff_seconds = (warning_60m_time - now_utc).total_seconds()
+            # Define target clock times for each sequence step
+            t_60 = event_datetime - datetime.timedelta(minutes=60)
+            t_30 = event_datetime - datetime.timedelta(minutes=30)
+            t_15 = event_datetime - datetime.timedelta(minutes=15)
+            t_5  = event_datetime - datetime.timedelta(minutes=5)
+            t_0  = event_datetime
 
-            if -900 <= diff_seconds <= 840:
+            diff_seconds = (t_60 - now_utc).total_seconds()
+
+            # Catch window: Trigger if check lands within -25m to +14m of T-60m
+            if -1500 <= diff_seconds <= 840:
                 event_name = row.get('Event Name', 'Event')
                 print(f"Matched scheduled event: {event_name} starting at {sched_time} UTC")
 
+                # If early, sleep until exact T-60m mark
                 if diff_seconds > 0:
-                    print(f"Aligning to exact T-60m start... sleeping {diff_seconds:.0f}s")
                     time.sleep(diff_seconds)
 
-                # Countdown Sequence
-                send_discord(row.get('Msg60'))
-                time.sleep(1800)  # 30m
+                # 1. Msg5 (~60 min alert)
+                send_discord(row.get('Msg5'), event_datetime, 60)
 
-                send_discord(row.get('Msg30'))
-                time.sleep(900)   # 15m
+                # 2. Msg4 (~30 min alert)
+                sleep_until(t_30)
+                send_discord(row.get('Msg4'), event_datetime, 30)
 
-                send_discord(row.get('Msg15'))
-                time.sleep(600)   # 10m
+                # 3. Msg3 (~15 min alert)
+                sleep_until(t_15)
+                send_discord(row.get('Msg3'), event_datetime, 15)
 
-                send_discord(row.get('Msg5'))
-                time.sleep(300)   # 5m
+                # 4. Msg2 (~5 min alert)
+                sleep_until(t_5)
+                send_discord(row.get('Msg2'), event_datetime, 5)
 
-                send_discord(row.get('Msg0'))
+                # 5. Msg1 (Event Live alert)
+                sleep_until(t_0)
+                send_discord(row.get('Msg1'), event_datetime, 0)
                 break
 
         except Exception as e:
