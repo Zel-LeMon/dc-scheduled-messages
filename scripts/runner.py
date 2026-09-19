@@ -39,6 +39,7 @@ def sleep_until(target_dt):
         time.sleep(delay)
 
 now_utc = datetime.datetime.now(datetime.timezone.utc)
+print(f"DEBUG - Current Runner UTC Time: {now_utc}")
 
 response = requests.get(csv_url)
 response.encoding = 'utf-8'
@@ -48,6 +49,9 @@ reader = csv.DictReader(lines)
 for row in reader:
     sched_date = row.get('Date Scheduled', '').strip()
     sched_time = row.get('Time Scheduled', '').strip()
+    event_name = row.get('Event Name', 'Event')
+
+    print(f"DEBUG - Checking Row: '{event_name}' | Date: '{sched_date}' | Time: '{sched_time}'")
 
     if sched_date and sched_time:
         try:
@@ -62,6 +66,7 @@ for row in reader:
                     continue
 
             if not parsed_date:
+                print(f"DEBUG - Could not parse date format for '{sched_date}'")
                 continue
 
             time_parts = sched_time.split(':')
@@ -82,11 +87,11 @@ for row in reader:
             t_0  = event_datetime
 
             diff_seconds = (t_60 - now_utc).total_seconds()
+            print(f"DEBUG - Event: '{event_name}' | Target T-60m UTC: {t_60} | diff_seconds: {diff_seconds:.0f}s ({diff_seconds/60:.1f}m)")
 
             # Catch window: Trigger if check lands within -25m to +14m of T-60m
             if -1500 <= diff_seconds <= 840:
-                event_name = row.get('Event Name', 'Event')
-                print(f"Matched scheduled event: {event_name} starting at {sched_time} UTC")
+                print(f"MATCH FOUND for '{event_name}'! Starting sequence...")
 
                 # If early, sleep until exact T-60m mark
                 if diff_seconds > 0:
@@ -113,4 +118,4 @@ for row in reader:
                 break
 
         except Exception as e:
-            print(f"Error evaluating row {row.get('Event Name')}: {e}")
+            print(f"Error evaluating row {event_name}: {e}")
