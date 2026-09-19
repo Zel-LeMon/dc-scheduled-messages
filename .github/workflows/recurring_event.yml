@@ -1,4 +1,3 @@
-
 name: Dynamic Event Reminders
 
 concurrency:
@@ -8,8 +7,9 @@ concurrency:
 on:
   schedule:
     - cron: '0,30 * * * *'
-
   workflow_dispatch:
+  repository_dispatch:
+    types: [cron_trigger]
 
 jobs:
   check-and-run:
